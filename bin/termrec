@@ -1,0 +1,358 @@
+#!/bin/bash
+# termrec - 终端命令记录工具
+# 记录一段时间内终端运行的所有命令
+
+RECORD_DIR="$HOME/.termrec"
+PIDFILE="$RECORD_DIR/recording.pid"
+
+# 颜色定义
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+usage() {
+    echo -e "${CYAN}termrec${NC} - 终端命令记录工具"
+    echo ""
+    echo -e "${YELLOW}用法:${NC}"
+    echo -e "  termrec start [名称]    开始记录（可选名称）"
+    echo -e "  termrec stop            停止记录"
+    echo -e "  termrec list            列出所有记录"
+    echo -e "  termrec show <id>       查看记录内容"
+    echo -e "  termrec export <id>     导出记录为文本文件"
+    echo -e "  termrec delete <id>     删除记录"
+    echo -e "  termrec clean           清理所有记录"
+    echo -e "  termrec status          显示当前记录状态"
+}
+
+ensure_dir() {
+    mkdir -p "$RECORD_DIR"
+}
+
+is_recording() {
+    if [ -f "$PIDFILE" ]; then
+        local pid=$(cat "$PIDFILE")
+        if kill -0 "$pid" 2>/dev/null; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
+start_recording() {
+    local name="${1:-session}"
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local logfile="$RECORD_DIR/${timestamp}_${name}.log"
+    local histfile="$RECORD_DIR/${timestamp}_${name}.history"
+    
+    ensure_dir
+    
+    if is_recording; then
+        echo -e "${RED}错误: 已有记录在进行中${NC}"
+        echo -e "使用 ${YELLOW}termrec stop${NC} 先停止当前记录"
+        return 1
+    fi
+    
+    # 创建记录元数据
+    cat > "$RECORD_DIR/${timestamp}_${name}.meta" <<EOF
+name=$name
+start=$(date -Iseconds)
+logfile=$logfile
+histfile=$histfile
+EOF
+    
+    # 启动 script 记录终端会话
+    script -q -t 2>"$RECORD_DIR/${timestamp}_${name}.timing" "$logfile" &
+    local script_pid=$!
+    echo "$script_pid" > "$PIDFILE"
+    echo "$timestamp" > "$RECORD_DIR/recording.session"
+    echo "$name" >> "$RECORD_DIR/recording.session"
+    
+    # 设置 bash 历史记录
+    export HISTFILE="$histfile"
+    export HISTSIZE=10000
+    export HISTFILESIZE=20000
+    export HISTCONTROL=ignoredups:erasedups
+    shopt -s histappend
+    
+    # 设置 PROMPT_COMMAND 记录命令
+    export _TERMREC_LOG="$RECORD_DIR/${timestamp}_${name}.cmdlog"
+    export _TERMREC_START=$(date +%s)
+    
+    echo -e "${GREEN}✓ 开始记录: ${name}${NC}"
+    echo -e "  日志文件: $logfile"
+    echo -e "  命令历史: $histfile"
+    echo -e "  使用 ${YELLOW}termrec stop${NC} 停止记录"
+    echo ""
+}
+
+stop_recording() {
+    if ! is_recording; then
+        echo -e "${YELLOW}没有正在进行的记录${NC}"
+        return 0
+    fi
+    
+    local pid=$(cat "$PIDFILE")
+    
+    # 停止 script 进程
+    kill "$pid" 2>/dev/null
+    wait "$pid" 2>/dev/null
+    
+    # 读取会话信息
+    if [ -f "$RECORD_DIR/recording.session" ]; then
+        local timestamp=$(sed -n '1p' "$RECORD_DIR/recording.session")
+        local name=$(sed -n '2p' "$RECORD_DIR/recording.session")
+        
+        # 更新元数据
+        if [ -f "$RECORD_DIR/${timestamp}_${name}.meta" ]; then
+            echo "end=$(date -Iseconds)" >> "$RECORD_DIR/${timestamp}_${name}.meta"
+        fi
+        
+        # 计算持续时间
+        local start_ts=$(date -d "$(head -1 "$RECORD_DIR/${timestamp}_${name}.meta" | cut -d= -f2)" +%s 2>/dev/null)
+        local end_ts=$(date +%s)
+        local duration=$((end_ts - start_ts))
+        local hours=$((duration / 3600))
+        local minutes=$(( (duration % 3600) / 60 ))
+        local seconds=$((duration % 60))
+        
+        echo -e "${GREEN}✓ 记录已停止: ${name}${NC}"
+        echo -e "  持续时间: ${hours}小时 ${minutes}分 ${seconds}秒"
+        echo -e "  使用 ${YELLOW}termrec show ${timestamp}_${name}${NC} 查看记录"
+    fi
+    
+    rm -f "$PIDFILE"
+    rm -f "$RECORD_DIR/recording.session"
+}
+
+list_recordings() {
+    ensure_dir
+    
+    local count=0
+    echo -e "${CYAN}=== 终端记录列表 ===${NC}"
+    echo ""
+    
+    for meta in "$RECORD_DIR"/*.meta; do
+        [ -f "$meta" ] || continue
+        count=$((count + 1))
+        
+        local name=$(grep "^name=" "$meta" | cut -d= -f2)
+        local start=$(grep "^start=" "$meta" | cut -d= -f2)
+        local end=$(grep "^end=" "$meta" | cut -d= -f2)
+        local logfile=$(grep "^logfile=" "$meta" | cut -d= -f2)
+        
+        local id=$(basename "$meta" .meta)
+        
+        if [ -z "$end" ]; then
+            status="${YELLOW}[记录中]${NC}"
+        else
+            status="${GREEN}[已完成]${NC}"
+        fi
+        
+        # 统计命令数量
+        local cmd_count=0
+        local histfile="${meta%.meta}.history"
+        if [ -f "$histfile" ]; then
+            cmd_count=$(wc -l < "$histfile")
+        fi
+        
+        echo -e "${BLUE}${count}.${NC} ${id} ${status}"
+        echo -e "   名称: ${name}"
+        echo -e "   开始: ${start}"
+        echo -e "   命令数: ${cmd_count}"
+        echo ""
+    done
+    
+    if [ $count -eq 0 ]; then
+        echo -e "${YELLOW}暂无记录${NC}"
+        echo -e "使用 ${CYAN}termrec start${NC} 开始记录"
+    fi
+}
+
+show_recording() {
+    local id="$1"
+    
+    if [ -z "$id" ]; then
+        echo -e "${RED}错误: 请指定记录 ID${NC}"
+        echo -e "使用 ${YELLOW}termrec list${NC} 查看可用记录"
+        return 1
+    fi
+    
+    local meta="$RECORD_DIR/${id}.meta"
+    local histfile="$RECORD_DIR/${id}.history"
+    local logfile="$RECORD_DIR/${id}.log"
+    local cmdlog="$RECORD_DIR/${id}.cmdlog"
+    
+    if [ ! -f "$meta" ]; then
+        echo -e "${RED}错误: 找不到记录 '${id}'${NC}"
+        return 1
+    fi
+    
+    local name=$(grep "^name=" "$meta" | cut -d= -f2)
+    local start=$(grep "^start=" "$meta" | cut -d= -f2)
+    local end=$(grep "^end=" "$meta" | cut -d= -f2)
+    
+    echo -e "${CYAN}=== 记录详情: ${name} ===${NC}"
+    echo -e "ID: ${id}"
+    echo -e "开始: ${start}"
+    [ -n "$end" ] && echo -e "结束: ${end}"
+    echo ""
+    
+    echo -e "${YELLOW}=== 命令历史 ===${NC}"
+    if [ -f "$histfile" ] && [ -s "$histfile" ]; then
+        cat -n "$histfile"
+    elif [ -f "$cmdlog" ] && [ -s "$cmdlog" ]; then
+        cat -n "$cmdlog"
+    else
+        echo "(无命令记录)"
+    fi
+}
+
+export_recording() {
+    local id="$1"
+    
+    if [ -z "$id" ]; then
+        echo -e "${RED}错误: 请指定记录 ID${NC}"
+        return 1
+    fi
+    
+    local meta="$RECORD_DIR/${id}.meta"
+    local histfile="$RECORD_DIR/${id}.history"
+    
+    if [ ! -f "$meta" ]; then
+        echo -e "${RED}错误: 找不到记录 '${id}'${NC}"
+        return 1
+    fi
+    
+    local name=$(grep "^name=" "$meta" | cut -d= -f2)
+    local start=$(grep "^start=" "$meta" | cut -d= -f2)
+    local exportfile="$HOME/Desktop/termrec_${id}.txt"
+    
+    {
+        echo "终端命令记录: ${name}"
+        echo "ID: ${id}"
+        echo "开始时间: ${start}"
+        echo "导出时间: $(date -Iseconds)"
+        echo ""
+        echo "=== 命令列表 ==="
+        if [ -f "$histfile" ] && [ -s "$histfile" ]; then
+            cat -n "$histfile"
+        else
+            echo "(无命令记录)"
+        fi
+    } > "$exportfile"
+    
+    echo -e "${GREEN}✓ 已导出到: ${exportfile}${NC}"
+}
+
+delete_recording() {
+    local id="$1"
+    
+    if [ -z "$id" ]; then
+        echo -e "${RED}错误: 请指定记录 ID${NC}"
+        return 1
+    fi
+    
+    local meta="$RECORD_DIR/${id}.meta"
+    
+    if [ ! -f "$meta" ]; then
+        echo -e "${RED}错误: 找不到记录 '${id}'${NC}"
+        return 1
+    fi
+    
+    local name=$(grep "^name=" "$meta" | cut -d= -f2)
+    
+    echo -e "${YELLOW}确定要删除记录 '${name}' (ID: ${id}) 吗？${NC}"
+    read -p "输入 y 确认: " confirm
+    
+    if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
+        rm -f "$RECORD_DIR/${id}".*
+        echo -e "${GREEN}✓ 已删除记录: ${name}${NC}"
+    else
+        echo -e "${YELLOW}已取消${NC}"
+    fi
+}
+
+clean_recordings() {
+    ensure_dir
+    
+    local count=$(ls -1 "$RECORD_DIR"/*.meta 2>/dev/null | wc -l)
+    
+    if [ $count -eq 0 ]; then
+        echo -e "${YELLOW}没有记录可清理${NC}"
+        return 0
+    fi
+    
+    echo -e "${YELLOW}确定要删除所有 ${count} 条记录吗？${NC}"
+    read -p "输入 y 确认: " confirm
+    
+    if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
+        rm -f "$RECORD_DIR"/*.meta
+        rm -f "$RECORD_DIR"/*.log
+        rm -f "$RECORD_DIR"/*.history
+        rm -f "$RECORD_DIR"/*.cmdlog
+        rm -f "$RECORD_DIR"/*.timing
+        echo -e "${GREEN}✓ 已清理所有记录${NC}"
+    else
+        echo -e "${YELLOW}已取消${NC}"
+    fi
+}
+
+show_status() {
+    if is_recording; then
+        if [ -f "$RECORD_DIR/recording.session" ]; then
+            local timestamp=$(sed -n '1p' "$RECORD_DIR/recording.session")
+            local name=$(sed -n '2p' "$RECORD_DIR/recording.session")
+            
+            echo -e "${GREEN}● 正在记录${NC}"
+            echo -e "  名称: ${name}"
+            echo -e "  ID: ${timestamp}_${name}"
+            echo ""
+            echo -e "使用 ${YELLOW}termrec stop${NC} 停止记录"
+        fi
+    else
+        echo -e "${YELLOW}○ 未在记录${NC}"
+        echo -e "使用 ${CYAN}termrec start${NC} 开始记录"
+    fi
+}
+
+# 主逻辑
+case "${1}" in
+    start)
+        start_recording "$2"
+        ;;
+    stop)
+        stop_recording
+        ;;
+    list)
+        list_recordings
+        ;;
+    show)
+        show_recording "$2"
+        ;;
+    export)
+        export_recording "$2"
+        ;;
+    delete)
+        delete_recording "$2"
+        ;;
+    clean)
+        clean_recordings
+        ;;
+    status)
+        show_status
+        ;;
+    help|--help|-h)
+        usage
+        ;;
+    *)
+        if [ -n "$1" ]; then
+            echo -e "${RED}错误: 未知命令 '$1'${NC}"
+            echo ""
+        fi
+        usage
+        exit 1
+        ;;
+esac

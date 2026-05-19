@@ -1,0 +1,50 @@
+termrec - 终端命令记录工具
+============================
+
+版本: 1.0.0
+
+包内容:
+--------
+termrec-1.0.0/
+├── bin/
+│   ├── termrec              # 主程序
+│   └── termrec-bash.sh      # Bash 集成脚本
+├── docs/
+│   └── README.md            # 详细文档
+├── install.sh               # 安装脚本
+├── uninstall.sh             # 卸载脚本
+├── Makefile                 # 构建脚本
+└── README.md                # 项目说明
+
+快速安装:
+--------
+1. 解压: tar xzf termrec-1.0.0.tar.gz
+2. 进入: cd termrec-1.0.0
+3. 安装: ./install.sh
+4. 加载: source ~/.bashrc
+
+使用方法:
+--------
+termrec start [名称]    开始记录
+termrec stop            停止记录
+termrec list            查看记录列表
+termrec show <id>       查看记录内容
+termrec export <id>     导出记录
+termrec help            查看帮助
+
+记录位置:
+--------
+~/.termrec/              所有记录存储目录
+
+卸载:
+----
+./uninstall.sh
+
+系统要求:
+--------
+- Bash 4.0+ 或 Zsh
+- Linux 或 macOS
+
+许可证:
+------
+MIT License

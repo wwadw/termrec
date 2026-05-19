@@ -21,7 +21,7 @@ usage() {
     echo -e "  termrec stop            停止记录"
     echo -e "  termrec list            列出所有记录"
     echo -e "  termrec show <id>       查看记录内容"
-    echo -e "  termrec export <id>     导出记录为文本文件"
+    echo -e "  termrec export <id> [目录]  导出记录为文本文件（默认当前目录）"
     echo -e "  termrec delete <id>     删除记录"
     echo -e "  termrec clean           清理所有记录"
     echo -e "  termrec status          显示当前记录状态"

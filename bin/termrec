@@ -347,7 +347,7 @@ case "${1}" in
         show_recording "$2"
         ;;
     export)
-        export_recording "$2"
+        export_recording "$2" "$3"
         ;;
     delete)
         delete_recording "$2"

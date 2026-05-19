@@ -222,6 +222,7 @@ export_recording() {
     fi
     
     local meta="$RECORD_DIR/${id}.meta"
+    local cmdlog="$RECORD_DIR/${id}.cmdlog"
     local histfile="$RECORD_DIR/${id}.history"
     
     if [ ! -f "$meta" ]; then
@@ -240,7 +241,9 @@ export_recording() {
         echo "导出时间: $(date -Iseconds)"
         echo ""
         echo "=== 命令列表 ==="
-        if [ -f "$histfile" ] && [ -s "$histfile" ]; then
+        if [ -f "$cmdlog" ] && [ -s "$cmdlog" ]; then
+            cat -n "$cmdlog"
+        elif [ -f "$histfile" ] && [ -s "$histfile" ]; then
             cat -n "$histfile"
         else
             echo "(无命令记录)"

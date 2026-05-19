@@ -153,8 +153,11 @@ list_recordings() {
         
         # 统计命令数量
         local cmd_count=0
+        local cmdlog="${meta%.meta}.cmdlog"
         local histfile="${meta%.meta}.history"
-        if [ -f "$histfile" ]; then
+        if [ -f "$cmdlog" ]; then
+            cmd_count=$(grep -c "^\[" "$cmdlog" 2>/dev/null || echo 0)
+        elif [ -f "$histfile" ]; then
             cmd_count=$(wc -l < "$histfile")
         fi
         

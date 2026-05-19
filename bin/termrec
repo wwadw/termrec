@@ -215,9 +215,17 @@ show_recording() {
 
 export_recording() {
     local id="$1"
+    local export_dir="${2:-.}"
     
     if [ -z "$id" ]; then
         echo -e "${RED}错误: 请指定记录 ID${NC}"
+        echo -e "用法: termrec export <id> [目录]"
+        return 1
+    fi
+    
+    # 检查目录是否存在
+    if [ ! -d "$export_dir" ]; then
+        echo -e "${RED}错误: 目录不存在 '${export_dir}'${NC}"
         return 1
     fi
     
@@ -232,7 +240,7 @@ export_recording() {
     
     local name=$(grep "^name=" "$meta" | cut -d= -f2)
     local start=$(grep "^start=" "$meta" | cut -d= -f2)
-    local exportfile="$HOME/Desktop/termrec_${id}.txt"
+    local exportfile="${export_dir}/termrec_${id}.txt"
     
     {
         echo "终端命令记录: ${name}"
